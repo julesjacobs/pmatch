@@ -1,0 +1,4 @@
+[debug] [pmatch-build] Classpath dependencies List()
+[debug] [pmatch-build] Dependencies from configurations List()
+[debug] Bloop wrote the configuration of project 'pmatch-build' to '/Users/jules/git/pmatch/project/.bloop/pmatch-build.json'
+[success] Generated .bloop/pmatch-build.json
