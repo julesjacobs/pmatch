@@ -190,44 +190,44 @@ result.pp()
 // Output:
 //   (heuristics make no difference for this example)
 //
-// test(it = Add(x1,x2)):
-//   test(x1 = Zero()):
-//     test(x2 = Zero()):
+// test(Add(x1,x2) = it):
+//   test(Zero() = x1):
+//     test(Zero() = x2):
 //       Z()
 //     A(x2)
-//   test(x2 = Zero()):
+//   test(Zero() = x2):
 //     B(x1)
-//   test(x1 = Suc(x3)):
+//   test(Suc(x3) = x1):
 //     E(x3,x2)
-//   test(x2 = Suc(x4)):
+//   test(Suc(x4) = x2):
 //     F(x1,x4)
 //   N(it)
-// test(it = Mul(x5,x6)):
-//   test(x5 = Zero()):
+// test(Mul(x5,x6) = it):
+//   test(Zero() = x5):
 //     C(x6)
-//   test(x6 = Zero()):
+//   test(Zero() = x6):
 //     D(x5)
-//   test(x5 = Suc(x7)):
+//   test(Suc(x7) = x5):
 //     G(x7,x6)
-//   test(x6 = Suc(x8)):
+//   test(Suc(x8) = x6):
 //     H(x5,x8)
-//   test(x5 = Add(x9,x10)):
+//   test(Add(x9,x10) = x5):
 //     I(x9,x10,x6)
-//   test(x6 = Add(x11,x12)):
+//   test(Add(x11,x12) = x6):
 //     J(x11,x12,x5)
-//   test(x5 = Mul(x13,x14)):
+//   test(Mul(x13,x14) = x5):
 //     K(x13,x14,x6)
 //   N(it)
-// test(it = Pow(x15,x16)):
-//   test(x16 = Suc(x17)):
+// test(Pow(x15,x16) = it):
+//   test(Suc(x17) = x16):
 //     L(x15,x17)
-//   test(x16 = Zero()):
+//   test(Zero() = x16):
 //     M(x15)
 //   N(it)
-// test(it = Suc(x18)):
-//   test(x18 = Add(x19,x20)):
-//     test(x19 = Zero()):
-//       test(x20 = Zero()):
+// test(Suc(x18) = it):
+//   test(Add(x19,x20) = x18):
+//     test(Zero() = x19):
+//       test(Zero() = x20):
 //         Q1()
 //       Q2(x19,x20)
 //     Q2(x19,x20)
@@ -266,6 +266,7 @@ val a = Var("a")
 val cc = Var("cc")
 val op = Var("op")
 
+
 k=0
 val clauses2 = List(
   Map("c" -> Constr("Ldi",List(cons(i,c)))),
@@ -283,6 +284,7 @@ val clauses3 = List(
   add(mul(x,x),zero) -> Code("B",List()),
   add(x,pow(x,x)) -> Code("C",List()),
   add(x,mul(x,x)) -> Code("F",List()),
+  add(x,zero) -> Code("G",List()),
   x -> Code("Z", List(x))
 )
 
@@ -292,9 +294,50 @@ heuristic = "good"
 val result3 = genMatch(exampleMatch3)
 result3.pp()
 
+// test(Add(x14,x15) = it):
+//   test(Zero() = x15):
+//     test(Add(x16,x17) = x14):
+//       A()
+//     test(Mul(x18,x19) = x14):
+//       B()
+//     G()
+//   test(Pow(x20,x21) = x15):
+//     C()
+//   test(Mul(x22,x23) = x15):
+//     F()
+//   Z(it)
+// Z(it)
+
 heuristic = "bad"
 val result4 = genMatch(exampleMatch3)
 result4.pp()
+
+// test(Add(x24,x25) = it):
+//   test(Add(x26,x27) = x24):
+//     test(Zero() = x25):
+//       A()
+//     test(Pow(x28,x29) = x25):
+//       C()
+//     test(Mul(x30,x31) = x25):
+//       F()
+//     Z(it)
+//   test(Mul(x32,x33) = x24):
+//     test(Zero() = x25):
+//       B()
+//     test(Pow(x34,x35) = x25):
+//       C()
+//     test(Mul(x36,x37) = x25):
+//       F()
+//     Z(it)
+//   test(Pow(x38,x39) = x25):
+//     C()
+//   test(Mul(x40,x41) = x25):
+//     F()
+//   test(Zero() = x25):
+//     G()
+//   Z(it)
+// Z(it)
+
 
 
 
@@ -311,3 +354,7 @@ result4.pp()
 // - But maybe n-way branches should be done if possible, because they might have more efficient codegen (e.g. jump table)
 // - We do want to use the types to eliminate dead cases, and to eagerly test/assert cases when only one constructor is still possible
 // - It might actually be feasible to enumerate all possible pattern matching trees, if we always branch on a var with a constructor in the first clause, because those aren't that many choices
+// - Luc Maranget shows that pattern matching compilation matters very little in practice, only 2% size difference, and in his best example 5% speed difference for compiled code on amd64.
+
+// Compile to single var non-nested match expressions, but multi-way + default branches. If no default branch, then the last branch is forced (given by types).
+// Prefer testing the same variable multiple times to help good codegen.
