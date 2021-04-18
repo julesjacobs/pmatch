@@ -4,13 +4,13 @@ type ID = String
 
 // We abstract the body of each clause as a call E(x1,...,xk)
 // In a full compiler, this would be an arbitrary piece of code
-case class Code(name:String, vars:List[Var])
+case class Call(name:String, args:List[ID])
 
 // A pattern is either a variable or a constructor
 // We could extend this, e.g. with guards
 class Pat
 case class Var(name:ID) extends Pat
-case class Constr(name:String, elems:List[Pat]) extends Pat
+case class Constr(name:String, args:List[Pat]) extends Pat
 
 // Our pattern matching construct is a list of clauses
 // A clause consists of bound variables that will be matched against patterns
@@ -49,7 +49,7 @@ case class Constr(name:String, elems:List[Pat]) extends Pat
 //        | z = Add(a,b) => body2[c := y]
 // Tuples on the other hand tend to accumulate a lot of unnecessary matches against variables, and also require
 // an extra step in the final codegen.
-case class Clause(pats: Map[String, Pat], body: Code)
+case class Clause(pats: Map[ID, Pat], body: Call)
 type Match = List[Clause]
 
 // We compile pattern matching to case trees
@@ -61,15 +61,17 @@ abstract class CaseTree {
 case class Test(x:ID, constr:String, elems:List[ID], yes:CaseTree, no:CaseTree) extends CaseTree {
   def pp() = {
     val args = elems.mkString(",")
-    prindent(s"test($constr($args) = $x):")
-    indent { yes.pp }
+    print(s"if $constr($args) = $x:")
+    indent { () => ln(); yes.pp() }
+    ln()
+    print(s"else: ")
     no.pp()
   }
 }
-case class Run(code:Code) extends CaseTree {
+case class Run(code: Call) extends CaseTree {
   def pp() = {
-    val args = code.vars.map(v => v.name).mkString(",")
-    prindent(s"${code.name}($args)")
+    val args = code.args.mkString(",")
+    print(s"${code.name}($args)")
   }
 }
 
@@ -79,8 +81,8 @@ def indent(f : () => Unit) = {
   f()
   indentLevel -= 1
 }
-def prindent(s:String) = {
-  println(("  " * indentLevel) + s)
+def ln() = {
+  print("\n" + ("  " * indentLevel))
 }
 
 var k = 0
@@ -90,52 +92,44 @@ def fresh() : String = {
 }
 
 // This is the main function that builds a case tree for a pattern matching problem
-def genMatch(clauses : List[Clause]) : CaseTree = {
+def genMatch(clauses : Seq[Clause]) : CaseTree = {
   if(clauses.isEmpty) assert(false, "Non-exhaustive pattern")
   val clauses2 = clauses.map(substVarEqs)
   val Clause(pats,bod) = clauses2.head  // We always try to determine if the first clause matches first, to avoid doing unnecessary work
   if(pats.isEmpty) return Run(bod)
   val branchVar = branchingHeuristic(pats, clauses2)
-  // Now we branch on branchVar by testing against the constructor in pats
+  // Now we branch on branchVar by testing against the constructors in pats
   // We generate the new clauses in the yes and no branch:
   //   The yes branch will contain all clauses that have the same constructor for that var + clauses that don't match on that var at all
   //   The no branch will contain all clauses that have a different constructor for that var + clause that don't match on that var at all
-  // We see that clauses that don't match on that var are duplicated. So we might want to choose our branching heuristic to minimize this
-  val Constr(constrname, elems) = pats(branchVar) // We know that the pattern must be a constructor at this point, because all vars have been subtituted
-  var yes = collection.mutable.ListBuffer[Clause]()
-  var no = collection.mutable.ListBuffer[Clause]()
-  val vars = elems.map(x => fresh())
+  val Constr(constrname, args) = pats(branchVar) // We know that the pattern must be a constructor at this point, because all vars have been subtituted
+  var yes = collection.mutable.Buffer[Clause]()
+  var no = collection.mutable.Buffer[Clause]()
+  val vars = args.map(x => fresh())
   for(Clause(pats,bod) <- clauses2){
-    if(pats.contains(branchVar)){
-      val Constr(constrname2, elems2) = pats(branchVar)
-      if(constrname == constrname2){
-        assert(elems.length == elems2.length, s"Constructors with inconsistent sizes: $constrname, ${elems.length} ${elems2.length}")
-        var newpats = pats - branchVar
-        for((vr,pat) <- vars.zip(elems2)){
-          newpats += (vr -> pat)
+    pats.get(branchVar) match {
+      case Some(Constr(constrname2, args2)) =>
+        if(constrname == constrname2){
+          assert(args.length == args2.length, s"Constructors with inconsistent sizes: $constrname")
+          yes += Clause(pats - branchVar ++ vars.zip(args2), bod)
+        }else{
+          no += Clause(pats,bod)
         }
-        yes += Clause(newpats, bod)
-      }else{
+      case None =>
+        // Clauses that don't match on that var are duplicated. So we want to choose our branching heuristic to minimize this
+        yes += Clause(pats,bod)
         no += Clause(pats,bod)
-      }
-    }else{
-      yes += Clause(pats,bod)
-      no += Clause(pats,bod)
     }
   }
-  return Test(branchVar, constrname, vars, genMatch(yes.toList), genMatch(no.toList))
+  return Test(branchVar, constrname, vars, genMatch(yes.toSeq), genMatch(no.toSeq))
 }
 
 // This takes a clause with plain variable matches such as (c = x) and substitutes them
 def substVarEqs(clause: Clause): Clause = {
-  val substitution = new collection.mutable.HashMap[String, String]()
-  val patterns = new collection.mutable.HashMap[String, Pat]()
-  for((v,p) <- clause.pats) p match {
-    case Var(v2) => substitution(v2) = v
-    case _ => patterns(v) = p
-  }
-  val body = Code(clause.body.name, clause.body.vars.map(v => Var(substitution.getOrElse(v.name, v.name))))
-  return Clause(patterns.toMap, body)
+  val Clause(pats, Call(name, args)) = clause
+  val substitution = pats.collect{ case (v,Var(w)) => w -> v }
+  val patterns = pats.filter((v,p) => p.isInstanceOf[Constr])
+  return Clause(patterns.toMap, Call(name, args.map(v => substitution.getOrElse(v, v))))
 }
 
 // Heuristically select a variable to branch on
@@ -145,9 +139,9 @@ def substVarEqs(clause: Clause): Clause = {
 // One solution might be to try all possible branchings, and choose the best case tree using some cost metric
 // Note sure if that's worth it, since the case trees are already quite good with a simple heuristic: the one that locally causes the least duplication
 var heuristic = "good"
-def branchingHeuristic(pats: Map[String, Pat], clauses: List[Clause]): String =
-  if(heuristic == "good") pats.keys.maxBy(v => clauses.count({case Clause(ps,bod) => ps.contains(v)}))
-  else if(heuristic == "bad") pats.keys.minBy(v => clauses.count({case Clause(ps,bod) => ps.contains(v)}))
+def branchingHeuristic(pats: Map[String, Pat], clauses: Seq[Clause]): String =
+  if(heuristic == "good") pats.keys.maxBy(v => clauses.count{case Clause(ps,bod) => ps.contains(v)})
+  else if(heuristic == "bad") pats.keys.minBy(v => clauses.count{case Clause(ps,bod) => ps.contains(v)})
   else if(heuristic == "none") pats.keys.head
   else assert(false, s"Bad heuristic: $heuristic")
 
@@ -163,23 +157,23 @@ def mul(a: Pat, b: Pat) = Constr("Mul", List(a, b))
 def pow(a: Pat, b: Pat) = Constr("Pow", List(a, b))
 
 val clauses = List(
-  add(zero,zero) -> Code("Z",List()),
-  add(zero, x) -> Code("A", List(x)),
-  add(x,zero) -> Code("B", List(x)),
-  mul(zero,x) -> Code("C", List(x)),
-  mul(x,zero) -> Code("D", List(x)),
-  add(suc(x), y) -> Code("E", List(x,y)),
-  add(x, suc(y)) -> Code("F", List(x,y)),
-  mul(suc(x), y) -> Code("G", List(x,y)),
-  mul(x, suc(y)) -> Code("H", List(x,y)),
-  mul(add(x, y), z) -> Code("I", List(x,y,z)),
-  mul(z, add(x, y)) -> Code("J", List(x,y,z)),
-  mul(mul(x, y), z) -> Code("K", List(x,y,z)),
-  pow(x, suc(y)) -> Code("L", List(x,y)),
-  pow(x, zero) -> Code("M", List(x)),
-  suc(add(zero,zero)) -> Code("Q1",List()),
-  suc(add(x,y)) -> Code("Q2",List(x,y)),
-  x -> Code("N", List(x))
+  add(zero,zero) -> Call("Z",List()),
+  add(zero, x) -> Call("A", List("x")),
+  add(x,zero) -> Call("B", List("x")),
+  mul(zero,x) -> Call("C", List("x")),
+  mul(x,zero) -> Call("D", List("x")),
+  add(suc(x), y) -> Call("E", List("x","y")),
+  add(x, suc(y)) -> Call("F", List("x","y")),
+  mul(suc(x), y) -> Call("G", List("x","y")),
+  mul(x, suc(y)) -> Call("H", List("x","y")),
+  mul(add(x, y), z) -> Call("I", List("x","y","z")),
+  mul(z, add(x, y)) -> Call("J", List("x","y","z")),
+  mul(mul(x, y), z) -> Call("K", List("x","y","z")),
+  pow(x, suc(y)) -> Call("L", List("x","y")),
+  pow(x, zero) -> Call("M", List("x")),
+  suc(add(zero,zero)) -> Call("Q1",List()),
+  suc(add(x,y)) -> Call("Q2", List("x","y")),
+  x -> Call("N", List("x"))
 )
 
 val exampleMatch : Match = clauses.map((pat,bod) => Clause(Map("it" -> pat), bod)).toList
@@ -251,7 +245,7 @@ result.pp()
 // | _,_,Mkclos cc::c -> 10
 // | _,_,Mkclosrec cc::c -> 11
 // | Clo (cc,ce),Val v::s,Apply::c -> 12
-// | a,(Code c::Env e::s),[] -> 13
+// | a,(Call c::Env e::s),[] -> 13
 // | a,[],[] -> 14
 
 val nil = Constr("nil",List())
@@ -273,19 +267,19 @@ val clauses2 = List(
   Map("c" -> Constr("Push",List(c))),
   Map("a" -> int(Var("n2")), "s" -> vall(int(Var("n1"))), "c" -> Constr("iop",List(op,c))),
   Map()
-).map(x => Clause(x,Code(fresh(),List())))
+).map(x => Clause(x,Call(fresh(),List())))
 
 val result2 = genMatch(clauses2)
 result2.pp()
 
 
 val clauses3 = List(
-  add(add(x,x),zero) -> Code("A",List()),
-  add(mul(x,x),zero) -> Code("B",List()),
-  add(x,pow(x,x)) -> Code("C",List()),
-  add(x,mul(x,x)) -> Code("F",List()),
-  add(x,zero) -> Code("G",List()),
-  x -> Code("Z", List(x))
+  add(add(x,x),zero) -> Call("A",List()),
+  add(mul(x,x),zero) -> Call("B",List()),
+  add(x,pow(x,x)) -> Call("C",List()),
+  add(x,mul(x,x)) -> Call("F",List()),
+  add(x,zero) -> Call("G",List()),
+  x -> Call("Z", List("x"))
 )
 
 val exampleMatch3 : Match = clauses3.map((pat,bod) => Clause(Map("it" -> pat), bod)).toList
