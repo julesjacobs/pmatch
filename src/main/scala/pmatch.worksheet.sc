@@ -257,7 +257,6 @@ val i = Var("i")
 val c = Var("c")
 val e = Var("e")
 val a = Var("a")
-val cc = Var("cc")
 val op = Var("op")
 
 
@@ -276,8 +275,8 @@ result2.pp()
 val clauses3 = List(
   add(add(x,x),zero) -> Call("A",List()),
   add(mul(x,x),zero) -> Call("B",List()),
-  add(x,pow(x,x)) -> Call("C",List()),
-  add(x,mul(x,x)) -> Call("F",List()),
+  add(x,mul(x,x)) -> Call("C",List()),
+  add(x,add(x,x)) -> Call("F",List()),
   add(x,zero) -> Call("G",List()),
   x -> Call("Z", List("x"))
 )
@@ -332,6 +331,29 @@ result4.pp()
 //   Z(it)
 // Z(it)
 
+heuristic = "good"
+
+val aa = Constr("A",List())
+val bb = Constr("B",List())
+val cc = Constr("C",List())
+val dd = Constr("D",List())
+val ee = Constr("E",List())
+val ff = Constr("F",List())
+
+val clauses4 = List(
+  add(aa,x) -> Call("A1",List()),
+  add(x,aa) -> Call("A2",List()),
+  add(x,bb) -> Call("A3",List()),
+  add(x,cc) -> Call("A4",List()),
+  add(x,dd) -> Call("A5",List()),
+  add(bb,ee) -> Call("A6",List()),
+  add(cc,ff) -> Call("A7",List()),
+  x -> Call("Z", List("x"))
+)
+
+val exampleMatch4 : Match = clauses4.map((pat,bod) => Clause(Map("it" -> pat), bod)).toList
+val result5 = genMatch(exampleMatch4)
+result5.pp()
 
 
 
